@@ -1,0 +1,89 @@
+version: '3.9'
+
+services:
+  secult-postgres:
+    image: postgres:16-alpine
+    container_name: secult-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-secult_db}
+      POSTGRES_USER: ${POSTGRES_USER:-secult_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secult_pass}
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - secult-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-secult_user} -d ${POSTGRES_DB:-secult_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: secult-backend
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: ${BACKEND_PORT:-4000}
+      DB_HOST: secult-postgres
+      DB_PORT: ${POSTGRES_PORT:-5432}
+      DB_NAME: ${POSTGRES_DB:-secult_db}
+      DB_USER: ${POSTGRES_USER:-secult_user}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-secult_pass}
+      JWT_SECRET: ${JWT_SECRET:-secult_super_secret_change_me}
+    ports:
+      - "4100:4000"
+    depends_on:
+      secult-postgres:
+        condition: service_healthy
+    networks:
+      - secult-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: secult-frontend
+    environment:
+      VITE_API_URL: http://backend:4000
+    ports:
+      - "3100:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - secult-network
+    restart: unless-stopped
+
+  adminer:
+    image: adminer:4.8.1-standalone
+    container_name: secult-adminer
+    depends_on:
+      secult-postgres:
+        condition: service_healthy
+    ports:
+      - "${ADMINER_PORT:-8081}:8080"
+    networks:
+      - secult-network
+    restart: unless-stopped
+
+networks:
+  secult-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
